@@ -98,7 +98,7 @@ static NSRecursiveLock *sWriteLock;
             
         });
     }
-#if TARGET_OS_IPHONE 
+#if TARGET_OS_IPHONE
 //    [[NSNotificationCenter defaultCenter]addObserver:self
 //                                            selector:@selector(clearUnNessesaryCachedData)
 //                                                name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
@@ -158,11 +158,11 @@ static NSRecursiveLock *sWriteLock;
 //    _add_cache_lock();
 //
 //    [sDataBaseCacheMap enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
-//        
+//
 //        NSMutableDictionary *subMap = (NSMutableDictionary *)obj;
-//        
+//
 //        NSMutableArray *mKeysToRemove = [NSMutableArray arrayWithCapacity:subMap.count];
-//        
+//
 //        [subMap enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
 //
 //            CFIndex retainCount = CFGetRetainCount((__bridge CFTypeRef)obj);
@@ -171,7 +171,7 @@ static NSRecursiveLock *sWriteLock;
 //                [mKeysToRemove addObject:key];
 //            }
 //        }];
-//        
+//
 //        [subMap removeObjectsForKeys:mKeysToRemove];
 //    }];
 //
@@ -225,9 +225,13 @@ static NSRecursiveLock *sWriteLock;
     if(!storeID)
         return nil;
     
-    NSError *error;
-    NSManagedObject *managedObj = [context existingObjectWithID:storeID error:&error];
+    NSManagedObject *managedObj = nil;
+    __strong NSManagedObject **pManageObj = &managedObj;
     
+    [context performBlockAndWait:^{
+        NSError *error = nil;
+        *pManageObj = [context existingObjectWithID:storeID error:&error];
+    }];
     return managedObj;
 }
 
@@ -320,21 +324,31 @@ static NSRecursiveLock *sWriteLock;
         
     for(NSObject<UniqueValueProtocol> *m in dCopy) {
         
-        NSManagedObject *DBm;
+        NSManagedObject *DBm = nil;
+        __strong NSManagedObject **pDBm = &DBm;
         if(usePredicateToFiltUniqueness)
             DBm = [self queryEntity:entityName DBModelForModel:m createIfNotExist:YES inContext:context];
         else
-            DBm = [[NSManagedObject alloc] initWithEntity:entity insertIntoManagedObjectContext:context];
-
-
+            [context performBlockAndWait:^{
+                *pDBm = [[NSManagedObject alloc] initWithEntity:entity insertIntoManagedObjectContext:context];
+            }];
+        
         if(DBm) {
             
             T_ModelToManagedObjectBlock blk = [sSettingDBValuesBlockMap objectForKey:entityName];
-            if(hasUniqueIdProperty)
-                [DBm setValue:m.uniqueValue forKey:@"uniqueID"];
+            if(hasUniqueIdProperty) {
+                NSString * uniqueValue = [m uniqueValue];
+                [DBm.managedObjectContext performBlockAndWait:^{
+                    [DBm setValue:uniqueValue forKey:@"uniqueID"];
+                }];
+            }
+                
             
             NSAssert(blk, @"model's mapper block hasn't set for entity %@, Use +[AsyncCoreData setModelToDataBaseMapper:forEntity:] method to setup",entityName);
-            blk(m, DBm);
+            [DBm.managedObjectContext performBlockAndWait:^{
+                blk(m, DBm);
+            }];
+           
             
             if(DBm.objectID.isTemporaryID) { //新插入的元素， 保存完后在更新cache
                 
@@ -411,33 +425,36 @@ static NSRecursiveLock *sWriteLock;
         else if([obj isKindOfClass:[NSArray class]]) {
             for(NSManagedObject *dbm in obj) {
                 [self removeCachedModelForDBModel:dbm forEntity:entityName];
-                [context deleteObject:dbm];
+                [context deleteObject:obj];
             }
         }
     };
     
     _add_write_lock();
-    for(NSObject<UniqueValueProtocol> *m in dCopy) {
-        
-        NSManagedObject *dbm = nil;
-        if(m.storeID)
-            dbm = [context objectWithID:m.storeID];
-        
-        if(dbm) {
-            deleteEntity(dbm);
-        }
-        else
-        {
-            NSPredicate *predicate = nil;
-            if(m.uniqueValue) {
-                predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",m.uniqueValue];
-                
-                NSArray *results = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSIntegerMax) sortByKey:nil reverse:NO inContext:context];
-                
-                deleteEntity(results);
+    [context performBlockAndWait:^{
+        for(NSObject<UniqueValueProtocol> *m in dCopy) {
+            
+            NSManagedObject *dbm = nil;
+            if (m.storeID) {
+                dbm = [context objectWithID:m.storeID];
+            }
+            if(dbm) {
+                deleteEntity(dbm);
+            }
+            else
+            {
+                NSPredicate *predicate = nil;
+                if(m.uniqueValue) {
+                    predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",m.uniqueValue];
+                    
+                    NSArray *results = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSIntegerMax) sortByKey:nil reverse:NO inContext:context];
+                    
+                    deleteEntity(results);
+                }
             }
         }
-    }
+    }];
+    
     
     
 #if CXT_USE_PERFORM_WAIT
@@ -473,10 +490,12 @@ static NSRecursiveLock *sWriteLock;
         NSPredicate *predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",v];
         
 #warning todo 为了节省内容，采取分批获取进行优化
-        NSArray<NSManagedObject *> *a = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSUIntegerMax) sortByKey:nil reverse:NO inContext:context];
-        for(NSManagedObject *mobj in a) {
-            [context deleteObject:mobj];
-        }
+        [context performBlockAndWait:^{
+            NSArray<NSManagedObject *> *a = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSUIntegerMax) sortByKey:nil reverse:NO inContext:context];
+            for(NSManagedObject *mobj in a) {
+                [context deleteObject:mobj];
+            }
+        }];
     }
     
 #if CXT_USE_PERFORM_WAIT
@@ -512,9 +531,12 @@ static NSRecursiveLock *sWriteLock;
     NSError *e;
 #warning todo 为了节省内容，采取分批获取进行优化
     NSArray<NSManagedObject *> *a = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSUIntegerMax) sortByKey:nil reverse:NO inContext:context];
-    for(NSManagedObject *mobj in a) {
-        [context deleteObject:mobj];
-    }
+    [context performBlockAndWait:^{
+        for(NSManagedObject *mobj in a) {
+            [context deleteObject:mobj];
+        }
+    }];
+    
     
 #if CXT_USE_PERFORM_WAIT
     [context saveAndWait:&e];
@@ -563,15 +585,21 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
     T_ModelFromManagedObjectBlock blk = [sGettingDBValuesBlockMap objectForKey:entityName];
     NSUInteger c = MIN(values.count, keys.count);
     for(NSManagedObject *mobj in a) {
-
-        for(int i = 0; i<c; i++) {
-            [mobj setValue:values[i] forKey:keys[i]];
-        }
+        [mobj.managedObjectContext performBlockAndWait:^{
+            for(int i = 0; i<c; i++) {
+                [mobj setValue:values[i] forKey:keys[i]];
+            }
+        }];
+        
         
         //更新缓存
         NSObject<UniqueValueProtocol> *m = [self cachedModelForDBModel:mobj forEntity:entityName];
+        __strong NSObject<UniqueValueProtocol> **pm = &m;
+        
         if(m) {
-            m = blk(m, mobj);
+            [mobj.managedObjectContext performBlockAndWait:^{
+                *pm = blk(m, mobj);
+            }];
             m.storeID = mobj.objectID;
         }
     }
@@ -592,6 +620,7 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
 +(__kindof NSObject *)queryEntity:(NSString *)entityName modelFromDBModel:(NSManagedObject *)DBModel
 {
     NSObject *m = [self cachedModelForDBModel:DBModel forEntity:entityName];
+    __strong NSObject **pm = &m;
     if(!m) {
         
         T_ModelFromManagedObjectBlock blk = [sGettingDBValuesBlockMap objectForKey:entityName];
@@ -599,7 +628,9 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
 //      因为managedObjectContext是assign属性，所以如果被释放掉了的话访问的时候就会出现野指针错误，所以这句断言并不能输出预期的信息
 //       NSAssert(DBModel.managedObjectContext, @"the NSManagedObject.managedObjectContext value is nil, which will cause fault value");
         //在执行block前要保证NSManagedObject.managedObjectContext依然存在，否则会引发fault data
-        m = blk(nil, DBModel);
+        [DBModel.managedObjectContext performBlockAndWait:^{
+            *pm = blk(nil, DBModel);
+        }];
         NSAssert(m, @"%@ returned nil model for entity:%@",blk,entityName);
         m.storeID = DBModel.objectID;
         [self cacheModel:m forEntity:entityName];
@@ -616,6 +647,7 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
 +(nullable NSManagedObject *)queryEntity:(NSString *)entityName existingDBModelForModel:(__kindof NSObject<UniqueValueProtocol> *)model inContext:(NSManagedObjectContext *)context {
     
     NSManagedObject *retObj = nil;
+    __strong NSManagedObject **pRetObj = &retObj;
     NSPredicate *predicate = nil;
     if(model.uniqueValue)
         predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",model.uniqueValue];
@@ -624,8 +656,13 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
         NSArray *results = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSIntegerMax) sortByKey:nil reverse:NO inContext:context];
         retObj = [self inter_filtOutOnlyEntityInResultList:results inContext:context];
     }
-    else if(model.storeID)
-        retObj = [context existingObjectWithID:model.storeID error:nil];
+    else if(model.storeID) {
+        [context performBlockAndWait:^{
+            *pRetObj = [context existingObjectWithID:model.storeID error:nil];
+        }];
+    }
+        
+        
     
     if(retObj)
         [self cacheModel:model forEntity:entityName];
@@ -636,10 +673,13 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
 +(NSManagedObject *)queryEntity:(NSString *)entityName DBModelForModel:(__kindof NSObject<UniqueValueProtocol> *)model createIfNotExist:(BOOL)create inContext:(NSManagedObjectContext *)context {
 
     NSManagedObject *retObj = [self  queryEntity:entityName existingDBModelForModel:model inContext:context];
-
-    if(!retObj && create)
-        retObj = [NSEntityDescription insertNewObjectForEntityForName:entityName inManagedObjectContext:context];
-
+    __strong NSManagedObject **pRetObj = &retObj;
+    if (!retObj && create) {
+        [context performBlockAndWait:^{
+            *pRetObj = [NSEntityDescription insertNewObjectForEntityForName:entityName inManagedObjectContext:context];
+        }];
+    }
+       
     return retObj;
 }
 
@@ -658,8 +698,14 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
     fetchRequest.fetchOffset = range.location;
     fetchRequest.fetchLimit = range.length;
     
-    NSError *error;
-    NSArray *results = [[self getContext] executeFetchRequest:fetchRequest error:&error];
+    NSManagedObjectContext *content = [self getContext];
+    
+    NSArray *results = nil;
+    __strong NSArray **pResults = &results;
+    [content performBlockAndWait:^{
+        NSError *error;
+        *pResults = [content executeFetchRequest:fetchRequest error:&error];
+    }];
     return results;
 }
 
@@ -738,118 +784,112 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
 
 
 +(NSArray<NSManagedObject *> *)dbModelsWithFetchRequest:(NSFetchRequest *)frqs
-                                                inRange:(NSRange)range
+                                                inRange:(NSRange)inPutRange
                                               sortByKey:(NSString *)sortKey
                                                 reverse:(BOOL)reverse
                                               inContext:(NSManagedObjectContext *)context
 {
-    frqs.fetchOffset = 0;
-    frqs.fetchLimit = NSUIntegerMax;
-    
-    if(sortKey)
-    {
-        NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:sortKey ascending:YES];//ascending value must be YES
-        if(frqs.sortDescriptors)
-        {
-            NSArray *sortDescriptors = frqs.sortDescriptors;
-            NSMutableArray *mArray = [NSMutableArray arrayWithArray:sortDescriptors];
-            [mArray addObject:sortDescriptor];
-            frqs.sortDescriptors = [NSArray arrayWithArray:mArray];
-        }
-        else
-        {
-            frqs.sortDescriptors = @[sortDescriptor];
-        }
-    }
-    
-    if(reverse)
-    {
-        NSError *error;
-        
-        NSUInteger count;
-        
-        NSFetchRequest *countFetchRequest;
-        if(frqs.resultType == NSCountResultType)
-        {
-            countFetchRequest = frqs;
-        }
-        else
-        {
-            countFetchRequest = [NSFetchRequest fetchRequestWithEntityName:frqs.entityName];
-            countFetchRequest.predicate = frqs.predicate;
-        }
-        
-        count = [context countForFetchRequest:countFetchRequest error:&error];
-        
-        NSInteger loc = count-range.location-range.length;
-        NSInteger len = range.length;
-        if(loc<0)
-        {
-            if((loc+len)<0)
-                len = 0;
-            else
-                len = range.length+loc;
-            
-            loc = 0;
-        }
-        range = NSMakeRange(loc, len);
-    }
-    
-    if(range.length == 0)
-        return nil;
-    
-    
-    frqs.fetchOffset = range.location;
-    frqs.fetchLimit = range.length;
-    [frqs setReturnsObjectsAsFaults:NO];
-    
     NSArray *results = nil;
-    NSError *error1;
-    @try {
-        results = [context executeFetchRequest:frqs error:&error1];
-        if(error1) {
-#if DEBUG
-            NSLog(@"fetch Error:%@",error1);
-#endif
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"Exception:%@",exception);
-    } @finally {
-        
-    }
+    __strong NSArray **pResults = &results;
+
     
-    if(reverse)
-    {
+    
+    [context performBlockAndWait:^{
         
-#if 0
-        //        NSEnumerator *em = [results reverseObjectEnumerator];
-        //#warning crash 发现 allObjects 中出现过闪退，而且次数还不少，但做压力测试又无法复现
-        //        results = [em allObjects];
-        // 有时候发现用NSEnumerator在执行allObjects方法时会闪退，所以这里采用用遍历方式反转数组
-        //add by wei.feng 2018.05.18 这样修改之后还是会闪退 results后面加一个copy再看看效果
-        //加了copy之后依然会发生闪退，跟外面调用有关，只在TrackDataManager获取轨迹列表和ListDataForTableManager获取活动信息的时候发生过，其他的时候都没有发生
-        results = [self reverseArray:[results copy]];
-#else
-        NSEnumerator *em;
-        BOOL catchedReverseException = NO;
+        NSRange range = inPutRange;
+        
+        frqs.fetchOffset = 0;
+        frqs.fetchLimit = NSUIntegerMax;
+        if(sortKey) {
+            NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:sortKey ascending:YES];//ascending value must be YES
+            if(frqs.sortDescriptors) {
+                NSArray *sortDescriptors = frqs.sortDescriptors;
+                NSMutableArray *mArray = [NSMutableArray arrayWithArray:sortDescriptors];
+                [mArray addObject:sortDescriptor];
+                frqs.sortDescriptors = [NSArray arrayWithArray:mArray];
+            } else {
+                frqs.sortDescriptors = @[sortDescriptor];
+            }
+        }
+        if(reverse) {
+            
+            NSFetchRequest *countFetchRequest;
+            if(frqs.resultType == NSCountResultType) {
+                countFetchRequest = frqs;
+            } else {
+                countFetchRequest = [NSFetchRequest fetchRequestWithEntityName:frqs.entityName];
+                countFetchRequest.predicate = frqs.predicate;
+            }
+            NSError *error = nil;
+            NSUInteger count = [context countForFetchRequest:countFetchRequest error:&error];
+            
+            
+            NSInteger loc = count-range.location-range.length;
+            NSInteger len = range.length;
+            if(loc<0) {
+                if((loc+len)<0) {
+                    len = 0;
+                } else {
+                    len = range.length+loc;
+                }
+                loc = 0;
+            }
+            range = NSMakeRange(loc, len);
+        }
+        if(range.length == 0) {
+            return;
+        }
+        frqs.fetchOffset = range.location;
+        frqs.fetchLimit = range.length;
+        [frqs setReturnsObjectsAsFaults:NO];
+        
         @try {
-            em = [results reverseObjectEnumerator];
+            NSError *error1 = nil;
+            *pResults = [context executeFetchRequest:frqs error:&error1];
+            if(error1) {
+    #if DEBUG
+                NSLog(@"fetch Error:%@",error1);
+    #endif
+            }
         } @catch (NSException *exception) {
-            catchedReverseException = YES;
+            NSLog(@"Exception:%@",exception);
         } @finally {
-            if(!catchedReverseException)
-                results = [em allObjects];
+            
         }
-#endif
-    }
-    
+        
+        if(reverse) {
+            
+    #if 0
+            //        NSEnumerator *em = [results reverseObjectEnumerator];
+            //#warning crash 发现 allObjects 中出现过闪退，而且次数还不少，但做压力测试又无法复现
+            //        results = [em allObjects];
+            // 有时候发现用NSEnumerator在执行allObjects方法时会闪退，所以这里采用用遍历方式反转数组
+            //add by wei.feng 2018.05.18 这样修改之后还是会闪退 results后面加一个copy再看看效果
+            //加了copy之后依然会发生闪退，跟外面调用有关，只在TrackDataManager获取轨迹列表和ListDataForTableManager获取活动信息的时候发生过，其他的时候都没有发生
+            results = [self reverseArray:[results copy]];
+    #else
+            NSEnumerator *em;
+            BOOL catchedReverseException = NO;
+            @try {
+                em = [results reverseObjectEnumerator];
+            } @catch (NSException *exception) {
+                catchedReverseException = YES;
+            } @finally {
+                if(!catchedReverseException)
+                    *pResults = [em allObjects];
+            }
+    #endif
+        }
+        
+    }];
+
     return results;
 }
 
 #pragma mark- statitic/count
 
 +(NSUInteger)queryEntity:(NSString *)entityName numberOfItemsWithPredicate:(nullable NSPredicate *)predicate {
-    return [self  queryEntity:entityName numberOfItemsWithPredicate:predicate inContext:[self getContext]];
+    return [self queryEntity:entityName numberOfItemsWithPredicate:predicate inContext:[self getContext]];
 }
 
 +(void)queryEntity:(NSString *)entityName numberOfItemsWithPredicateAsync:(nullable NSPredicate *)predicate completion:(void(^)(NSUInteger ))block {
@@ -869,7 +909,11 @@ numberOfItemsWithPredicate:(nullable NSPredicate *)predicate
     
     NSFetchRequest * frqs = [NSFetchRequest fetchRequestWithEntityName:entityName];
     frqs.predicate = predicate;
-    NSUInteger c = [context countForFetchRequest:frqs error:nil];
+    NSUInteger c = 0;
+    NSUInteger *pc = &c;
+    [context performBlockAndWait:^{
+        *pc = [context countForFetchRequest:frqs error:nil];
+    }];
     return c;
 }
 
@@ -909,25 +953,29 @@ numberOfItemsWithPredicate:(nullable NSPredicate *)predicate
 
 +(NSNumber *)queryEntity:(NSString *)entityName valueWithFuction:(NSString *)func forKey:(NSString *)key withPredicate:(NSPredicate *)predicate inContext:(NSManagedObjectContext *)context
 {
-    NSFetchRequest *fetchRequest = [NSFetchRequest fetchRequestWithEntityName:entityName];
-    if(predicate)
-        fetchRequest.predicate = predicate;
+    NSNumber *number = nil;
+    __strong NSNumber **pNumber = &number;
+    [context performBlockAndWait:^{
+        NSFetchRequest *fetchRequest = [NSFetchRequest fetchRequestWithEntityName:entityName];
+        if(predicate)
+            fetchRequest.predicate = predicate;
+        
+        NSArray *propertiesToFetch = @[[self expressionDescriptionOfFuction:func forKeyPath:key]];
+        [self set_UpFetch:fetchRequest forProperties:propertiesToFetch sortByKeyPath:nil reverse:NO];
+        
+        NSError *error;
+        NSArray *results = [context executeFetchRequest:fetchRequest error:&error];
+        if(!error && results.count>0) {
+            NSDictionary *rDic = [results firstObject];
+            id val = [rDic objectForKey:key];
+            if(!val) {
+                val = [rDic objectForKey:@"requestValue"];
+            }
+            *pNumber = val;
+        }
+    }];
     
-    NSArray *propertiesToFetch = @[[self expressionDescriptionOfFuction:func forKeyPath:key]];
-    [self set_UpFetch:fetchRequest forProperties:propertiesToFetch sortByKeyPath:nil reverse:NO];
-    
-    
-    NSError *error;
-    NSArray *results = [context executeFetchRequest:fetchRequest error:&error];
-    if(!error && results.count>0)
-    {
-        NSDictionary *rDic = [results firstObject];
-        id val = [rDic objectForKey:key];
-        if(!val)
-            val = [rDic objectForKey:@"requestValue"];
-        return val;
-    }
-    return nil;
+    return number;
 }
 
 
@@ -967,8 +1015,7 @@ sumValuesForKeyPathes:(NSArray *)keyPathes
     NSArray *groupBys = groups;
     
     NSMutableArray *propertiesToFetch = [NSMutableArray arrayWithArray:groupBys];
-    for(NSString *keyPath in keyPathes)
-    {
+    for(NSString *keyPath in keyPathes) {
         [propertiesToFetch addObject:[self expressionDescriptionOfFuction:@"sum:" forKeyPath:keyPath]];
     }
     
@@ -980,9 +1027,12 @@ sumValuesForKeyPathes:(NSArray *)keyPathes
     fetchRequest.fetchOffset = range.location;
     fetchRequest.fetchLimit = range.length;
     
-    NSError *error;
-    NSArray *results = [context executeFetchRequest:fetchRequest error:&error];
-    
+    NSArray *results = nil;
+    __strong NSArray **pResults = &results;
+    [context performBlockAndWait:^{
+        NSError *error;
+        *pResults = [context executeFetchRequest:fetchRequest error:&error];
+    }];
     return results;
 }
 

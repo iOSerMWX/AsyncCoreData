@@ -21,64 +21,76 @@
     NSURL *coreDataModelFileUrl = [[NSBundle mainBundle] URLForResource:modelName withExtension:@"momd"];
     NSManagedObjectModel *mobjModel = [[NSManagedObjectModel alloc] initWithContentsOfURL:coreDataModelFileUrl];
     
-    NSError *e;
+    NSError *e = nil;
+    
     NSPersistentStoreCoordinator *srcPersistantStoreCord = [self storeCoordinateWithModel:mobjModel fromFile:srcDBFileUrl error:&e];
     NSManagedObjectContext *srcContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
     srcContext.persistentStoreCoordinator = srcPersistantStoreCord;
     
     RETURN_IF_ERROR
     
-    NSPersistentStoreCoordinator *destPersistantStoreCord = [self storeCoordinateWithModel:mobjModel fromFile:destDBFileUrl error:&e];
-    NSManagedObjectContext *destContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
-    destContext.persistentStoreCoordinator = destPersistantStoreCord;
-    
-    RETURN_IF_ERROR
-    
-#if DEBUG
-    NSLog(@"Start trasfer:\nfrom:%@\nto:%@\n---",srcDBFileUrl.path,destDBFileUrl.path);
-#endif
-    
-    for(NSEntityDescription *entDes in mobjModel.entities) {
-#if DEBUG
-        NSLog(@"tranfer entity:%@",entDes.name);
-#endif
-        NSFetchRequest *ferq = [NSFetchRequest fetchRequestWithEntityName:entDes.name];
-        NSFetchRequest *ferq2 = [NSFetchRequest fetchRequestWithEntityName:entDes.name];
+    [srcContext performBlockAndWait:^{
+        NSError *error = nil;
+        NSPersistentStoreCoordinator *destPersistantStoreCord = [self storeCoordinateWithModel:mobjModel fromFile:destDBFileUrl error:&error];
+        NSManagedObjectContext *destContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
+        destContext.persistentStoreCoordinator = destPersistantStoreCord;
         
-        BOOL shouldResolveConflict = NO;
-        for(NSPropertyDescription *pdes in entDes.properties) {
-            if([pdes.name isEqualToString:@"uniqueID"]) {
-                shouldResolveConflict = YES;
-                break;
-            }
+//        RETURN_IF_ERROR
+        if (error) {
+            return;
         }
         
-        NSArray *objs = [srcContext executeFetchRequest:ferq error:&e];
-        
-        RETURN_IF_ERROR
-        
-        for(NSManagedObject *fromObj in objs) {
+    #if DEBUG
+        NSLog(@"Start trasfer:\nfrom:%@\nto:%@\n---",srcDBFileUrl.path,destDBFileUrl.path);
+    #endif
+        [destContext performBlockAndWait:^{
             
-            //解决唯一索引冲突 用
-            if(shouldResolveConflict) {
-                id uniqueVal = [fromObj valueForKey:@"uniqueID"];
-                if(uniqueVal) {
-                    ferq2.predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",uniqueVal];
+            NSError *error = nil;
+            
+            for(NSEntityDescription *entDes in mobjModel.entities) {
+        #if DEBUG
+                NSLog(@"tranfer entity:%@",entDes.name);
+        #endif
+                NSFetchRequest *ferq = [NSFetchRequest fetchRequestWithEntityName:entDes.name];
+                NSFetchRequest *ferq2 = [NSFetchRequest fetchRequestWithEntityName:entDes.name];
+                
+                BOOL shouldResolveConflict = NO;
+                for(NSPropertyDescription *pdes in entDes.properties) {
+                    if([pdes.name isEqualToString:@"uniqueID"]) {
+                        shouldResolveConflict = YES;
+                        break;
+                    }
                 }
                 
-                NSUInteger c = [destContext countForFetchRequest:ferq2 error:nil];
-                if(c > 0)
-                    continue;
+                NSArray *objs = [srcContext executeFetchRequest:ferq error:&error];;
+                if (error) {
+                    return;
+                }
+    //            RETURN_IF_ERROR
+                
+                for(NSManagedObject *fromObj in objs) {
+                    
+                    //解决唯一索引冲突 用
+                    if(shouldResolveConflict) {
+                        id uniqueVal = uniqueVal = [fromObj valueForKey:@"uniqueID"];;
+                    
+                        if(uniqueVal) {
+                            ferq2.predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",uniqueVal];
+                        }
+                        NSUInteger c = [destContext countForFetchRequest:ferq2 error:nil];
+                    
+                        if(c > 0)
+                            continue;
+                    }
+                    NSManagedObject *toObj = [[NSManagedObject alloc] initWithEntity:entDes insertIntoManagedObjectContext:destContext];
+                    for(NSPropertyDescription *pdes in entDes.properties) {
+                        [toObj setValue:[fromObj valueForKey:pdes.name] forKey:pdes.name];
+                    }
+                }
             }
-            
-            NSManagedObject *toObj = [[NSManagedObject alloc] initWithEntity:entDes insertIntoManagedObjectContext:destContext];
-            for(NSPropertyDescription *pdes in entDes.properties) {
-                [toObj setValue:[fromObj valueForKey:pdes.name] forKey:pdes.name];
-            }
-        
-        }
-    }
-    [destContext save:&e];
+            [destContext save:&error];
+        }];
+    }];
     
     RETURN_IF_ERROR
     

@@ -137,13 +137,13 @@ modelsWithPredicateAsync:(nullable NSPredicate *)predicate
  @param reverse 是否按照插入顺序反序输出， YES先插入的在后面，NO后插入的在前面
  @return NSArray<NSDictionary *> *
  */
-+(NSArray<NSDictionary *> *)queryEntity:(nonnull NSString *)entityName
-                              keyPathes:(NSArray *)keyPathes
-                                groupby:(NSArray *)groups
-                          withPredicate:(NSPredicate *)predicate
-                            sortKeyPath:(NSString *)sortKeyPath
-                                inRange:(NSRange)range
-                                reverse:(BOOL)reverse;
++(NSArray<NSDictionary *> *_Nullable)queryEntity:(nonnull NSString *)entityName
+                                       keyPathes:(NSArray *_Nullable)keyPathes
+                                         groupby:(NSArray *_Nullable)groups
+                                   withPredicate:(NSPredicate *_Nullable)predicate
+                                     sortKeyPath:(NSString *_Nullable)sortKeyPath
+                                         inRange:(NSRange)range
+                                         reverse:(BOOL)reverse;
 
 #pragma mark- statitic/count
 
@@ -152,7 +152,7 @@ modelsWithPredicateAsync:(nullable NSPredicate *)predicate
 
 +(void)queryEntity:(nonnull NSString *)entityName
     numberOfItemsWithPredicateAsync:(nullable NSPredicate *)predicate
-                         completion:(void(^)(NSUInteger ))block;
+        completion:(void(^_Nullable)(NSUInteger ))block;
 
 
 
@@ -174,33 +174,33 @@ modelsWithPredicateAsync:(nullable NSPredicate *)predicate
         completion:(void(^_Nullable)(NSNumber * _Nullable ))block;
 
 
-+(NSArray<NSDictionary *> *)queryEntity:(NSString *)entityName
-                  sumValuesForKeyPathes:(NSArray *)keyPathes
-                                groupby:(NSArray <NSString *>*)groups
-                          withPredicate:(NSPredicate *)predicate
-                            sortKeyPath:(NSString *)sortKeyPath
-                                inRange:(NSRange)range;
++(NSArray<NSDictionary *> *_Nullable)queryEntity:(NSString *_Nonnull)entityName
+                           sumValuesForKeyPathes:(NSArray *_Nullable)keyPathes
+                                         groupby:(NSArray <NSString *>*_Nullable)groups
+                                   withPredicate:(NSPredicate *_Nullable)predicate
+                                     sortKeyPath:(NSString *_Nullable)sortKeyPath
+                                         inRange:(NSRange)range;
 
-+(void)queryEntity:(NSString *)entityName
-    sumValuesForKeyPathes:(NSArray *)keyPathes
-                  groupby:(NSArray <NSString *>*)groups
-            withPredicate:(NSPredicate *)predicate
-              sortKeyPath:(NSString *)sortKeyPath
-                  inRange:(NSRange)range
-               completion:(void (^)(NSArray<NSDictionary *> *))block;
++(void)queryEntity:(NSString *_Nonnull)entityName
+sumValuesForKeyPathes:(NSArray *_Nullable)keyPathes
+           groupby:(NSArray <NSString *>*_Nullable)groups
+     withPredicate:(NSPredicate *_Nullable)predicate
+       sortKeyPath:(NSString *_Nullable)sortKeyPath
+           inRange:(NSRange)range
+        completion:(void (^_Nullable)(NSArray<NSDictionary *> *_Nullable))block;
 
 
 +(nullable id)modelForStoreUrl:(nonnull NSURL *)storeUrl;
 +(nullable id)modelForStoreID:(nonnull NSManagedObjectID *)storeID;
 
 #pragma mark- for subclasses
-+(nullable NSManagedObject *)queryEntity:(NSString *)entityName
-                 existingDBModelForModel:(__kindof NSObject<UniqueValueProtocol> *)model
++(nullable NSManagedObject *)queryEntity:(NSString *_Nonnull)entityName
+                 existingDBModelForModel:(__kindof NSObject<UniqueValueProtocol> *_Nullable)model
                                inContext:(nonnull NSManagedObjectContext *)context;
 
 
 +(nullable NSArray<NSManagedObject *> *)queryEntity:(nonnull NSString *)entityName
-                     dbModelsWithPredicate:(NSPredicate *)predicate
+                              dbModelsWithPredicate:(NSPredicate *_Nullable)predicate
                                    inRange:(NSRange)range
                                  sortByKey:(nullable NSString *)sortKey
                                    reverse:(BOOL)reverse

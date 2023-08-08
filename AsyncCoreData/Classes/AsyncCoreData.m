@@ -871,7 +871,7 @@ updateModelsWithPredicate:(nullable NSPredicate *)predicate
             NSEnumerator *em;
             BOOL catchedReverseException = NO;
             @try {
-                em = [results reverseObjectEnumerator];
+                em = [*pResults reverseObjectEnumerator];
             } @catch (NSException *exception) {
                 catchedReverseException = YES;
             } @finally {

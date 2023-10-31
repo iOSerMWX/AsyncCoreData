@@ -71,7 +71,9 @@ NSMutableSet *disabledCacheEntities;
         if(iName){
             options = @{NSMigratePersistentStoresAutomaticallyOption:@YES,
                         NSInferMappingModelAutomaticallyOption:@YES,
+#if (TARGET_OS_OSX || TARGET_OS_IOS || TARGET_OS_MACCATALYST)
                         NSPersistentStoreUbiquitousContentNameKey:iName,
+#endif
                         };
             
             [self registerForiCloudNotificationsForPersistentCoordinator:persistantStoreCord];
@@ -240,11 +242,12 @@ NSMutableSet *disabledCacheEntities;
                            selector:@selector(storesDidChange:)
                                name:NSPersistentStoreCoordinatorStoresDidChangeNotification
                              object:persistentStoreCoordinator];
-    
+#if (TARGET_OS_OSX || TARGET_OS_IOS || TARGET_OS_MACCATALYST)
     [notificationCenter addObserver:self
                            selector:@selector(persistentStoreDidImportUbiquitousContentChanges:)
                                name:NSPersistentStoreDidImportUbiquitousContentChangesNotification
                              object:persistentStoreCoordinator];
+#endif
 }
 
 +(void)storesWillChange:(NSNotification *)notification {

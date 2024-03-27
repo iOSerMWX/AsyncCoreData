@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'AsyncCoreData'
-  s.version          = '3.4.3'
+  s.version          = '3.4.4'
   s.summary          = 'Thread safe And Memory cached models for core data usage'
 
 # This description is used to generate tags and improve search results.
@@ -29,12 +29,13 @@ Thread safe And Memory cached models for core data usage
   s.source           = { :git => 'https://github.com/Roen-Ro/AsyncCoreData.git', :tag => s.version.to_s }
   # s.social_media_url = 'https://twitter.com/<TWITTER_USERNAME>'
 
-  s.ios.deployment_target = '8.0'
+  s.ios.deployment_target = '10.0'
   s.macos.deployment_target = '10.8'
   s.watchos.deployment_target = '8.0'
   
   s.source_files = 'AsyncCoreData/Classes/**/*'
   
+  s.resource_bundles = {'AsyncCoreData' => ['AsyncCoreData/Assets/PrivacyInfo.xcprivacy']}
   # s.resource_bundles = {
   #   'AsyncCoreData' => ['AsyncCoreData/Assets/*.png']
   # }
@@ -42,4 +43,5 @@ Thread safe And Memory cached models for core data usage
   # s.public_header_files = 'Pod/Classes/**/*.h'
   # s.frameworks = 'UIKit', 'MapKit'
   # s.dependency 'AFNetworking', '~> 2.3'
+  s.requires_arc = true
 end

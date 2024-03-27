@@ -431,29 +431,31 @@ static NSRecursiveLock *sWriteLock;
     };
     
     _add_write_lock();
-    [context performBlockAndWait:^{
-        for(NSObject<UniqueValueProtocol> *m in dCopy) {
-            
-            NSManagedObject *dbm = nil;
-            if (m.storeID) {
-                dbm = [context objectWithID:m.storeID];
-            }
-            if(dbm) {
-                deleteEntity(dbm);
-            }
-            else
-            {
-                NSPredicate *predicate = nil;
-                if(m.uniqueValue) {
-                    predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",m.uniqueValue];
-                    
-                    NSArray *results = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSIntegerMax) sortByKey:nil reverse:NO inContext:context];
-                    
-                    deleteEntity(results);
-                }
+    [context reset];
+    for(NSObject<UniqueValueProtocol> *m in dCopy) {
+        
+        NSManagedObject *dbm = nil;
+        __strong NSManagedObject **pDBm = &dbm;
+        if (m.storeID) {
+            [context performBlockAndWait:^{
+                *pDBm = [context objectWithID:m.storeID];
+            }];
+        }
+        if(dbm) {
+            deleteEntity(dbm);
+        }
+        else
+        {
+            NSPredicate *predicate = nil;
+            if(m.uniqueValue) {
+                predicate = [NSPredicate predicateWithFormat:@"uniqueID = %@",m.uniqueValue];
+                
+                NSArray *results = [self queryEntity:entityName dbModelsWithPredicate:predicate inRange:NSMakeRange(0, NSIntegerMax) sortByKey:nil reverse:NO inContext:context];
+                
+                deleteEntity(results);
             }
         }
-    }];
+    };
     
     
     
